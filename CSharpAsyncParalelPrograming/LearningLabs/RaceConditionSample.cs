@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace CSharpAsyncParalelPrograming.LearningLabs
 {
@@ -9,13 +10,13 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
     // kilit objesi tanımlamak
     private static readonly object lockObj = new object();
 
+    // Lock Object
+    // Interlocked (Atomic operations)
+
     // Mutex (Thread)
     // Monitor (Thread)
     // Semaphore (Async Task)
-    // lock object
-    // Interlocked (Atomic operations)
     // Concurency Collections (ConcurrentDictionary, ConcurrentQueue, ConcurentBag etc.)
-
 
 
     // race conditio durumu simüle delim
@@ -23,48 +24,54 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
     // Sayısal değer değil de bir nesne üzerinde çalışırken lock mekanizması kullanmak daha mantıklı olabilir.
     public static void RaceConditionDemo()
     {
+      const int iterasyon = 1000000;
 
+      // 1) KİLİTSİZ: sayac++ atomik değildir (oku-artır-yaz). İki thread araya girince artışlar kaybolur.
+      int kilitsizSayac = 0;
+
+      Thread u1 = new Thread(() => { for (int i = 0; i < iterasyon; i++) kilitsizSayac++; });
+      Thread u2 = new Thread(() => { for (int i = 0; i < iterasyon; i++) kilitsizSayac++; });
+      u1.Start();
+      u2.Start();
+      u1.Join();
+      u2.Join();
+
+      Console.WriteLine($"[Kilitsiz] Beklenen: {iterasyon * 2}, Gerçek: {kilitsizSayac} (genelde beklenenden küçük)");
+
+      // 2) KİLİTLİ: lock ile aynı anda sadece tek thread sayac'a erişir.
       int sayac = 0;
 
       Thread t1 = new Thread(() =>
       {
-
-        for (int i = 0; i < 1000000; i++)
+        for (int i = 0; i < iterasyon; i++)
         {
           lock (lockObj) // sayac değişkenine eriş
             sayac++;
         }
-
       });
-
 
       Thread t2 = new Thread(() =>
       {
-
-        for (int i = 0; i < 1000000; i++)
+        for (int i = 0; i < iterasyon; i++)
         {
-          lock (lockObj)
+          lock (lockObj) // sayac değişkenine eriş
             sayac++;
         }
-
-
       });
-
 
 
       t1.Start();
       t2.Start();
+
       t1.Join();
       t2.Join();
 
-
-      Console.WriteLine($"Sayac degeri: {sayac}"); // Beklenen 11 ama bazen 10 olabilir
-
+      Console.WriteLine($"[Lock] Beklenen: {iterasyon}, Gerçek: {sayac}");
     }
 
 
     // Add, Increment, Decrement, Exchange, CompareExchange gibi methodlar mevcuttur. Bu methodlar, bir değişken üzerinde atomik işlemler gerçekleştirir ve
-    // lock kıyasla daha hızlıdır. Değişken değerinin value type olması gerekir. Interlocked sınıfı, özellikle sayısal değerler üzerinde işlemler yaparken kullanışlıdır.
+    // lock kıyasla daha hızlıdır. Sayısal tiplerde (int, long...) Add/Increment çalışır; Exchange<T>/CompareExchange<T> referans tiplerle de kullanılabilir.
 
     public static void InterlockDemo()
     {
@@ -73,35 +80,27 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
 
       Thread t1 = new Thread(() =>
       {
-
         for (int i = 0; i < 1000000; i++)
         {
           Interlocked.Add(ref sayac, 1);
         }
-
       });
 
 
       Thread t2 = new Thread(() =>
       {
-
         for (int i = 0; i < 1000000; i++)
         {
-          Interlocked.Add(ref sayac, -1);
+          Interlocked.Add(ref sayac, 1);
         }
-
-
       });
-
-
 
       t1.Start();
       t2.Start();
       t1.Join();
       t2.Join();
 
-
-      Console.WriteLine($"Sayac degeri: {sayac}"); // Beklenen 11 ama bazen 10 olabilir
+      Console.WriteLine($"Sayac degeri: {sayac}"); // Beklenen her zaman 2.000.000
 
     }
 
@@ -115,9 +114,10 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
     public static void MonitorDemo()
     {
       int sayac = 0;
-      Thread t1 = new Thread(() =>
+
+      void Calis()
       {
-        for (int i = 0; i < 1000000; i++)
+        for (int i = 0; i < 5; i++)
         {
           Monitor.Enter(lockObj); // kilit alma işlemi
           try
@@ -129,146 +129,193 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
             Monitor.Exit(lockObj); // kilit bırakma işlemi
           }
         }
-      });
+      }
 
+      Thread t1 = new Thread(Calis);
+      Thread t2 = new Thread(Calis);
+      t1.Start();
+      t2.Start();
+      t1.Join();
+      t2.Join();
+
+      Console.WriteLine($"[Monitor] Beklenen: {sayac}");
     }
 
 
     public static void MonitorDemo2()
     {
       int sayac = 0;
+      int atlanan = 0;
 
       object monitorObject = new object();
 
-      // aynı process içerisinde çalışırken lockObject
-      Thread t1 = new Thread(() =>
+      void Calis()
       {
-
-        try
+        for (int i = 0; i < 5; i++)
         {
-          for (int i = 0; i < 1000000; i++)
+          bool lockTaken = false;
+          try
           {
+            // 1000 ms boyunca kilit almaya çalış, alınamazsa bu iterasyonu atla
+            Monitor.TryEnter(monitorObject, 1000, ref lockTaken);
 
-            bool lockTaken = false;
-
-            // 1000 ms boyunca kilitleme yapmaya çalış, eğer kilit alınamazsa işlemi atla
-            Monitor.TryEnter(monitorObject, 1000, ref lockTaken); // kilit alma işlemi
-
-            if (lockTaken)
+            if (lockTaken) // kilit tutuluyor mu ? 
             {
               sayac++;
             }
             else
             {
-              Console.WriteLine("Kilit alınamadı, işlemi atla" + sayac);
+              Interlocked.Increment(ref atlanan);
             }
-
+          }
+          finally
+          {
+            // Sadece kilit alındıysa bırak, yoksa SynchronizationLockException fırlar.
+            if (lockTaken)
+              Monitor.Exit(monitorObject);
           }
         }
-        catch (Exception ex)
+      }
+
+      // Atlamayı göstermek için: 1. thread kilidi 1,5 sn tutar, 2. thread 1 sn timeout ile almaya çalştığından 1 thread atlatır. 
+      Thread tutan = new Thread(() =>
+      {
+        Monitor.Enter(monitorObject);
+        try
         {
-          Console.WriteLine("hata oluştu" + ex.Message);
+          Thread.Sleep(1500); // kilidi 1,5 sn boyunca tut
         }
         finally
         {
           Monitor.Exit(monitorObject);
         }
-
-
       });
 
-      t1.Start();
-      t1.Join();
+      Thread alan = new Thread(Calis);
 
-      Console.WriteLine($"[Monitor] sayaç {sayac}");
+      tutan.Start();
+      alan.Start();
+      tutan.Join();
+      alan.Join();
 
+      Console.WriteLine($"[Monitor TryEnter] sayaç {sayac}, atlanan {atlanan}");
     }
 
 
 
-    // Mutex -> Mutual Exclusion: Mutex, birden fazla thread veya process arasında paylaşılan bir kaynağa erişimi kontrol etmek için kullanılan bir senkronizasyon aracıdır. Mutex, sadece tek bir thread veya process'in belirli bir anda belirli bir kaynağa erişmesine izin verir. Mutex, özellikle farklı process'ler arasında senkronizasyon sağlamak için kullanılır. Burada ise birden fazla thread'in aynı kaynağa erişmeye çalıştığı durumlarda kullanılır. Mutex, lock mekanizmasına göre daha ağır bir yapıya sahiptir ve genellikle inter-process senkronizasyonu için tercih edilir.
-    // Not: Asenkron Task işlemleri için tercih edilmez. Thread OS düzeyinde uygulanır. 
-    // Örnek: Bilgisayarda çalışan 2 farklı exe'nin aynı dosyaya veya kaynağa aynı anda erişmesini enegllemek istersek çok mantıklı olur. 
+    // Mutex -> Mutual Exclusion: Mutex, birden fazla thread veya process arasında paylaşılan bir kaynağa erişimi kontrol etmek için kullanılan bir senkronizasyon aracıdır.
+
+    /* Nerede kullanılır?
+      - Birden fazla program aynı log, config veya veritabanı dosyasına yazacaksa
+      - Uygulamanın aynı anda sadece bir kopyasının çalışmasını istiyorsanız(single - instance)
+      - Paylaşılan donanım gibi tek kullanımlık bir kaynak varsa 
+    */
+
+    //  Nerede gerekmez? Tek bir programın kendi thread'leri arasında işlem yapıyorsanız lock yeterlidir. Mutex, sadece process'ler arasında koordinasyon gerektiğinde kullanılır.
+
+
+    /* Thread affinity, bir kaynağın veya işlemin belirli bir thread'e bağlı olması demektir. Kilidi alan thread'in aynı thread olarak bırakması gerekir, başka bir thread bırakamaz.
+
+       Örnek: Mutex'te WaitOne() ile kilidi alan thread, ReleaseMutex() de aynı thread'den çağrılmalıdır. Başka bir thread çağırırsa hata alırsınız.
+
+       Bu, async/await ile ilgili bir sorun doğurur: await sonrası kod farklı bir thread'de devam edebilir. Bu yüzden await arasında mutex alıp bırakmaya çalışmak hata verir. Async kodda SemaphoreSlim kullanılmasının nedeni de budur, çünkü o thread'e bağlı değildir.
+
+     */
 
     public static void MutexDemo()
     {
-      using Mutex m = new Mutex(initiallyOwned: false, name: null);
+      const int threadSayisi = 10;
+      const int iterasyon = 100; // her thread sayacı 100 kez artırır -> beklenen toplam 10.000
 
-
-      // Sonuç: 100 farklı thread aynı paylaimli kaynak ile birbirlerin izole paylaimli kaynağı bozmdan çalıabiliyor. 
-      int paylasilanKaynak = 0;
-
-
-      Thread[] threads = new Thread[100]; // Beklenti 10 -> her biri içerisinde 10 kez döner.
-      for (int i = 0; i < threads.Length; i++)
+      // 1) KİLİTSİZ: Senkronizasyon olmadan paylaşılan sayaç artırılırsa artışlar kaybolur.
+      // Mutex'in neden gerektiğini görmek için önce bu sonucu izleyin (genelde beklenenden küçük çıkar).
+      int kilitsizSayac = 0;
+      Thread[] kilitsizThreadler = new Thread[threadSayisi];
+      for (int i = 0; i < threadSayisi; i++)
       {
-        int idx = i;
-        threads[idx] = new Thread(() =>
+        kilitsizThreadler[i] = new Thread(() =>
         {
-
-          m.WaitOne(); // Mutex kilidini al
-          try
-          {
-            paylasilanKaynak++;
-            //Console.WriteLine($"[Thread {idx} ${Thread.CurrentThread.ManagedThreadId}");
-            //Console.WriteLine($"Thread {idx} paylaşılan kaynağı güncelledi: {paylasilanKaynak}");
-          }
-          finally
-          {
-            m.ReleaseMutex(); // Mutex kilidini bırak
-          }
-
+          for (int j = 0; j < iterasyon; j++)
+            kilitsizSayac++;
         });
-
-        threads[idx].Start();
-
       }
+      foreach (var t in kilitsizThreadler) t.Start();
+      foreach (var t in kilitsizThreadler) t.Join();
 
 
-      foreach (var item in threads)
+      Console.WriteLine($"[Kilitsiz] Beklenen: {threadSayisi * iterasyon}, Gerçek: {kilitsizSayac}");
+
+      // 2) ÖNEMLİ: ADSIZ MUTEX: Adsız kullanımda Bu mutex yalnızca bu process içinde geçerlidir.
+      // Aynı işi lock ile de yapardı; Mutex burada sadece mantığı gösterir. Adsız mutex lock ile de yapılabilir.
+
+      // Senaryo: Diyelim ki aynı exe'yi iki kez çalıştırdınız ve ikisi de aynı log.txt dosyasına yazıyor.
+      // Her process bu kodu çalıştırır
+
+      int mutexSayac = 0;
+      using Mutex m = new Mutex(initiallyOwned: false, name: "LogDosyasiKilidi"); // aynı isim aynı kilit
+
+      Thread[] mutexThreadler = new Thread[threadSayisi];
+      for (int i = 0; i < threadSayisi; i++)
       {
-        item.Join();
+        mutexThreadler[i] = new Thread(() =>
+        {
+          for (int j = 0; j < iterasyon; j++)
+          {
+            m.WaitOne();              // Sıram gelene kadar bekle
+            try
+            {
+              // Kritik bölge: dosyaya aynı anda sadece bir process yazabilir
+              File.AppendAllText("log.txt", $"{DateTime.Now} - PID {Environment.ProcessId}\n");
+              mutexSayac++;
+            }
+            finally
+            {
+              m.ReleaseMutex();       // Sıradakine geçiş izni ver
+            }
+          }
+        });
       }
+      foreach (var t in mutexThreadler) t.Start();
+      foreach (var t in mutexThreadler) t.Join();
 
-
-      Console.WriteLine($"Son paylaşılan kaynak değeri: {paylasilanKaynak}"); // Beklenen 10  
-
+      Console.WriteLine($"[Mutex] Beklenen: {threadSayisi * iterasyon}, Gerçek: {mutexSayac}");
 
     }
 
 
 
-    // Birden fazla process'in olduğu asenkron operasyonlar için hem hız, hemde kaynak tüketiminin verimliliği açısından o zaman semaphoreslim.
-    // N sayıda thread aynı anda belilri bir adet kadar işlem yapabilir. Mutex (1,1) -> 100 adet birbirinden izole olan thread OS düzyinde aynı veri kümesi ile çalıştırıyordu.
-    // OS düzeyinde bir kilitleme mekanizması yoksa, sadece In-process uygulama düzeyinde bir işlem yapıalcak ise mantıklı ve hızlı bir çözüm.
-    // Senaryo olarak: Bir api endpointe aynı anda eş zamanlı olarak 5 adet istek yapılabilsin. (Throttling)
+    // Asenkron (await'li) operasyonlarda eşzamanlılığı sınırlamak için SemaphoreSlim kullanılır.
+    // Uyarı: lock içinde await yapılamaz, SemaphoreSlim.WaitAsync yapılabilir.
+    // N görev aynı anda en fazla belirli sayıda işlem yapabilir. Mutex (1,1) OS düzeyindeydi ve process'ler arası çalışırdı.
+    // SemaphoreSlim sadece process için çalışır hafif ve hızlıdır.
+    // Senaryo olarak: Bir api endpointe aynı anda en fazla 4 istek yapılabilsin. (Throttling)
 
     public static async Task SemaphoreSlimSample()
     {
 
+      // Aynı anda en fazla 4 görev. (maxCount verilmezse sınırsız; initialCount = başlangıçtaki boş slot sayısı)
+      using SemaphoreSlim semaphoreSlim = new SemaphoreSlim(20);
 
-      using SemaphoreSlim semaphoreSlim = new SemaphoreSlim(initialCount: 4, maxCount: 8);
-
-      // 100 birim masamız var
-      // ilk 4 müşteri masaları rezerve etmiş. direk oturabilir.
-      // geri kalan 96 müşteriden fazla müşterinin oturabilmesi için masaların boşalmasını beklemesi gerekir.
-      // bekletme işlemi sadece masalar dolu ise hiç boşta masa yoksa yapılıyor. 
-      // boş masa varsa bu restoran maksimum 8 müşterinin siparişini aynı anda alabilir. 
+      // 20 masalı bir restoran düşünelim: ilk 20 müşteri direkt oturur,
+      // kalan 80 müşteri bir masa boşalana kadar WaitAsync'te (thread'i bloklamadan) bekler.
 
       Task[] gorevler = Enumerable.Range(0, 100).Select(async i =>
       {
 
         await semaphoreSlim.WaitAsync(); // slot boşalana kadar beklet, kilit mekanizması
+        Console.WriteLine($"Müşteri masaya oturdu, Kalan Slot: {semaphoreSlim.CurrentCount}");
 
         try
         {
-          Console.WriteLine($"[Semaphore] Görev-{i}, Kalan Slot: {semaphoreSlim.CurrentCount}");
-          await Task.Delay(300);
+
+          await Task.Delay(30);
 
         }
         finally
         {
+
           semaphoreSlim.Release(); // slotu serberst bırak.
+          Console.WriteLine($"Müşteri kalktı, yeni bir müşteri oturabilir, Kalan Slot: {semaphoreSlim.CurrentCount}");
         }
 
 
@@ -288,12 +335,14 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
     // Yazma işlemininde yapılabilmesi için 5 kişinin okuma işlemini bitirmesi gerekir. (Write Lock bekletilir)
     // Daha çok okumanın olduğu ortak paylaşılan kaynaklarda, ReaderWriterLockSlim kullanmak performans açısından daha avantajlı olabilir. Ancak, yazma işlemlerinin sık olduğu durumlarda, bu sınıfın kullanımı performans sorunlarına yol açabilir. Bu nedenle, kullanım senaryosuna göre doğru senkronizasyon aracını seçmek önemlidir.
 
+    // Uyarı: Tüm readerlar toplamda 200ms içerisinde paylaşımlı okuma yapıyorlar.
+
     public static void ReaderWriterLockSlimSample()
     {
-      Stopwatch sp  = Stopwatch.StartNew();
+      Stopwatch sp = Stopwatch.StartNew();
 
 
-      ReaderWriterLockSlim rwLock = new ReaderWriterLockSlim();
+      using ReaderWriterLockSlim rwLock = new ReaderWriterLockSlim();
       // Okuma işlemi
       Thread[] readerThreads = Enumerable.Range(0, 10).Select(item => new Thread(() =>
       {
@@ -310,9 +359,6 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
         }
 
       })).ToArray();
-
-
-     
 
       // Yazma işlemi
       Thread writerThread = new Thread(() =>
@@ -331,130 +377,27 @@ namespace CSharpAsyncParalelPrograming.LearningLabs
       });
 
 
+      // Yanlış kullanım
+      // Önce hepsini başlat (Join'i hemen çağırırsak okuyucular sıralı çalışır ve paylaşımlı okuma görünmez).
       foreach (var readerThread in readerThreads)
       {
         readerThread.Start();
-        readerThread.Join();
+        // readerThread.Join();
       }
 
       writerThread.Start();
+
+      // Doğru kullanım
+      //foreach (var readerThread in readerThreads)
+      //  readerThread.Join();
+
       writerThread.Join();
 
-
-
-      Console.WriteLine($"Toplam süre: {sp.ElapsedMilliseconds} ms"); // Okuma işlemi başladı. Yazma işlemi başladı. Okuma işlemi tamamlandı. Yazma işlemi tamamlandı. Toplam süre: 5000 ms
-
-    }
-
-
-
-    // Thread Safe Collections
-    // Key value cinsinden değer tutacaksak, burada concurent dictionary tercih edebiliriz. Buda sırasız çalışır.
-    // Sıralı çalışmak isterseniz ise blocking collection, hem kapasite kontrolü yapar. Hemde ekleme çıkarma işlemlerinde sıralı ve kilit mekanizmalı çalışır.
-    public static void ConcurrentDictionarySample()
-    {
-      Stopwatch sp = Stopwatch.StartNew();
-      ConcurrentDictionary<int, string> concurrentDictionary = new ConcurrentDictionary<int, string>();
-
-
-      Parallel.For(0, 100000, i =>
-      {
-        //Console.WriteLine($"[Parallel] {i}");
-
-        concurrentDictionary.TryAdd(i, i.ToString());
-
-        string value = Math.Sqrt(i).ToString() + " " + Math.Pow(i, 2).ToString();
-
-        if (concurrentDictionary.TryGetValue(i, out value))
-        {
-          // Console.WriteLine($"Key: 1, Value: {value}"); // Key: 1, Value: Bir - Güncellendi
-        }
-
-
-        concurrentDictionary.TryRemove(100, out _);
-        concurrentDictionary.TryRemove(101, out _);
-
-      });
-
-      sp.Stop();
-
-      Console.WriteLine($"ConcurrentDictionary'de kalan eleman sayısı: {concurrentDictionary.Count}"); // ConcurrentDictionary'de kalan eleman sayısı
-      Console.WriteLine($"Tahmini süre: {sp.ElapsedMilliseconds}"); // ConcurrentDictionary'de kalan eleman sayısı
-
-
+      // Okuyucular paralel çalışır (~200 ms), writer tek başına (3000 ms). Toplam ≈ 3200 ms (sıralı olsaydı 5000 ms).
+      Console.WriteLine($"Toplam süre: {sp.ElapsedMilliseconds} ms");
 
     }
 
-
-    // Not: eğer paralel olarak işleyeceğiniz değerlerin sıralaması önemli değilse, bunu kullanalım. performans açısından en çok terchi ettiğimiz.
-    // Task[] gibi işlemler ve Paralel işlemlerde terchi edin. Multi Thread ve Asenkron programalama için ideladir.
-    public static void ConcurrentBagSample()
-    {
-      Stopwatch sp = Stopwatch.StartNew();
-      ConcurrentBag<string> bags = new();
-
-
-      Parallel.For(0, 100000, i =>
-      {
-        //Console.WriteLine($"[Parallel] {i}");
-
-        bags.Add(i.ToString());
-
-       string value1= Math.Sqrt(i).ToString() + " " + Math.Pow(i, 2).ToString();
-
-        if (bags.TryPeek(out value1))
-        {
-          // Console.WriteLine($"Key: 1, Value: {value}"); // Key: 1, Value: Bir - Güncellendi
-        }
-
-      });
-
-      string value1 = Math.Sqrt(1).ToString() + " " + Math.Pow(1, 2).ToString();
-      string value2 = Math.Sqrt(2).ToString() + " " + Math.Pow(2, 2).ToString();
-
-      bags.TryTake(out value1); 
-      bags.TryTake(out value2);
-
-
-      sp.Stop();
-
-      Console.WriteLine($"ConcurrentDictionary'de kalan eleman sayısı: {bags.Count}"); // ConcurrentDictionary'de kalan eleman sayısı
-      Console.WriteLine($"Tahmini süre: {sp.ElapsedMilliseconds}"); // ConcurrentDictionary'de kalan eleman sayısı
-
-
-
-    }
-
-    public static void NormalDictionarySample()
-    {
-      // System.ArgumentException: 'Destination array was not long enough. Check the destination index, length, and the array's lower bounds. (Parameter 'destinationArray')'
-      // Thread Safe olmayan bir listeyele ParalelFor içerisinde çalışmaya çalışıyorsun.
-      Dictionary<int, string> dictionary = new Dictionary<int, string>();
-
-      Parallel.For(0, 100000, i =>
-      {
-        //Console.WriteLine($"[Parallel] {i}");
-
-        dictionary.TryAdd(i, i.ToString());
-
-        string value = "deneme" + i;
-
-        if (dictionary.TryGetValue(i, out value))
-        {
-          // Console.WriteLine($"Key: 1, Value: {value}"); // Key: 1, Value: Bir - Güncellendi
-        }
-
-
-        dictionary.Remove(100, out _);
-        dictionary.Remove(101, out _);
-
-      });
-
-      Console.WriteLine($"Dictionary'de kalan eleman sayısı: {dictionary.Count}"); // ConcurrentDictionary'de kalan eleman sayısı
-
-
-
-    }
 
   }
 }
